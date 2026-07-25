@@ -137,6 +137,26 @@
 
   // ---------- Camera ----------
   function startCamera() {
+    // On an insecure origin (plain http:// to anything other than
+    // localhost/127.0.0.1 - which is exactly how the ESP32 serves this
+    // page over your LAN), browsers don't reject getUserMedia with a
+    // catchable error - they don't expose navigator.mediaDevices at all.
+    // Calling .getUserMedia on it then throws a *synchronous* TypeError
+    // before any promise exists, so the .catch() below never runs and
+    // nothing gets shown. Check up front instead, so this fails loudly
+    // with an actionable message rather than silently doing nothing.
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus("Camera blocked: this page isn't a \"secure origin\" (needs https://, or localhost)");
+      elHeader.textContent =
+        "Camera unavailable on this connection. Browsers only allow camera " +
+        "access on HTTPS pages or on localhost - plain http://" + window.location.hostname +
+        " doesn't qualify. On Android Chrome/desktop Chrome you can allow it via " +
+        "chrome://flags/#unsafely-treat-insecure-origin-as-secure (add this page's " +
+        "http://... address, enable, relaunch). iOS Safari has no such flag - see the " +
+        "README's HTTPS section for workarounds.";
+      return;
+    }
+
     if (stream) {
       stream.getTracks().forEach(function (t) { t.stop(); });
       stream = null;

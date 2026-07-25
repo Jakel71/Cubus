@@ -141,6 +141,19 @@ scan (e.g. one sticker mislabeled as a color that still forms a legal
 permutation) will solve "successfully" but for the wrong cube, so it's
 still worth double-checking each face with Edit if the result looks off.
 
+**Camera doesn't start, no error shown**
+Almost certainly the secure-origin issue from the section above. On an
+insecure origin (plain `http://<esp32-ip>`, which is exactly how the
+ESP32 serves this page unless you've set up the Chrome flag or HTTPS
+workaround), browsers don't just reject the camera request - they don't
+expose `navigator.mediaDevices` at all, so calling `.getUserMedia` on it
+threw a silent, uncatchable error and nothing visibly happened. `app.js`
+now checks for this explicitly before touching the camera and shows a
+clear on-page message with the fix (the Chrome flag, or HTTPS) instead of
+failing silently. If you still see nothing after updating, bump the
+`?v=` cache-buster on `app.js` in `index.html` (already done here) and
+hard-refresh, since browsers hold onto these files aggressively.
+
 ## Known limitations vs. the Python version
 
 - k-means clustering runs in JavaScript on whatever device opens the page,
