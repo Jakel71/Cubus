@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Cubus &mdash; Cube Scanner</title>
+<style>
+  :root {
+    --bg: #16181c;
+    --panel: #1f2228;
+    --border: #33373f;
+    --text: #e8e8ea;
+    --muted: #9099a6;
+    --accent: #50c2ff;
+    --warn: #ffb454;
+    --good: #58d68d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding-bottom: 40px;
+  }
+  header {
+    padding: 14px 16px 8px;
+  }
+  header h1 {
+    margin: 0 0 2px;
+    font-size: 1.15rem;
+    letter-spacing: 0.02em;
+  }
+  header p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  #headerText {
+    margin: 10px 16px 0;
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 0.92rem;
+  }
+  .stageWrap {
+    position: relative;
+    margin: 12px 16px;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: #000;
+  }
+  #stage {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  video { display: none; }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 16px 8px;
+  }
+  button {
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.primary { background: var(--accent); color: #0a1520; border-color: var(--accent); font-weight: 600; }
+
+  .settingsRow {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 0 16px 8px;
+    font-size: 0.85rem;
+    color: var(--muted);
+    flex-wrap: wrap;
+  }
+  select { font: inherit; padding: 6px 8px; border-radius: 6px; background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+  label { display: flex; align-items: center; gap: 6px; }
+
+  #countsText {
+    margin: 0 16px 4px;
+    font-size: 0.8rem;
+    color: var(--muted);
+    letter-spacing: 0.03em;
+  }
+  #statusLine {
+    margin: 0 16px 8px;
+    font-size: 0.82rem;
+    color: var(--accent);
+    min-height: 1.1em;
+  }
+
+  #captureBanner {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0 16px 10px;
+    padding: 10px 12px;
+    background: #223146;
+    border: 1px solid #345b82;
+    border-radius: 10px;
+    font-size: 0.88rem;
+  }
+  #captureBanner .bannerBtns { display: flex; gap: 8px; }
+
+  #solveSection { display: none; margin: 18px 16px; }
+  #results { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .resultBlock {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.82rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .solutionBlock {
+    background: #14261c;
+    border: 1px solid #2c5c3f;
+    color: var(--good);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 1rem;
+    letter-spacing: 0.03em;
+    word-break: break-word;
+  }
+  .warnBlock {
+    background: #322217;
+    border: 1px solid #6a4a20;
+    color: var(--warn);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+  }
+
+  /* Edit overlay */
+  #editOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.88);
+    z-index: 20;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  #editPanel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+    max-width: 360px;
+    width: 100%;
+  }
+  #editTitle { font-size: 1rem; margin-bottom: 12px; }
+  #editGrid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+  .editCell {
+    aspect-ratio: 1 / 1;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.25);
+    cursor: pointer;
+  }
+  .editCell.centerCell { border: 2px solid var(--good); cursor: default; }
+  #editPalette { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  #editPalette .swatch {
+    width: 40px; height: 40px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.75rem; font-weight: 700; color: rgba(0,0,0,0.55);
+    border: 2px solid rgba(255,255,255,0.15);
+    cursor: pointer;
+  }
+  #editPalette .swatch.selected { border-color: var(--accent); }
+  #editButtons { display: flex; justify-content: flex-end; gap: 8px; }
+
+  footer { margin: 24px 16px 0; color: var(--muted); font-size: 0.75rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Cubus</h1>
+  <p>Scan all six faces, then solve.</p>
+</header>
+
+<div id="headerText">Loading camera&hellip;</div>
+
+<div class="stageWrap">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="stage"></canvas>
+</div>
+
+<div class="controls">
+  <button id="captureBtn" class="primary">Capture face</button>
+  <button id="calibrateBtn">Calibrate center</button>
+  <button id="undoBtn">Undo</button>
+  <button id="resetBtn">Reset all</button>
+</div>
+
+<div class="settingsRow">
+  <label>Camera:
+    <select id="facingSelect">
+      <option value="environment" selected>Rear</option>
+      <option value="user">Front</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="mirrorCheck"> Mirror preview</label>
+</div>
+
+<div id="countsText"></div>
+<div id="statusLine"></div>
+
+<div id="captureBanner">
+  <span id="captureBannerText"></span>
+  <span class="bannerBtns">
+    <button id="captureBannerEdit">Edit</button>
+    <button id="captureBannerContinue" class="primary">Continue</button>
+  </span>
+</div>
+
+<div id="solveSection">
+  <button id="solveBtn" class="primary">Solve cube</button>
+  <div id="results"></div>
+</div>
+
+<footer>Two-phase solving powered by cube.js (Herbert Kociemba's algorithm), running locally in your browser.</footer>
+
+<div id="editOverlay">
+  <div id="editPanel">
+    <div id="editTitle">Editing face</div>
+    <div id="editGrid"></div>
+    <div id="editPalette"></div>
+    <div id="editButtons">
+      <button id="editCancel">Cancel</button>
+      <button id="editConfirm" class="primary">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script src="cubejs.js"></script>
+<script src="algorithm.js"></script>
+<script src="vision.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
