@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 
@@ -423,12 +424,40 @@ def draw_hud(frame, cells, samples, labels, face_index, samples_by_color):
         )
 
 
-def run_scanner():
-    camera = cv2.VideoCapture(0)
+def open_camera(source):
+    if isinstance(source, str) and source.isdigit():
+        source = int(source)
+
+    camera = cv2.VideoCapture(source)
     if not camera.isOpened():
-        raise RuntimeError("Could not open webcam")
-    camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        raise RuntimeError(
+            f"Could not open camera source {source!r}. "
+            "Run with --list-cameras to see which indexes work."
+        )
+
+    if isinstance(source, int):
+        camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+    return camera
+
+
+def list_cameras(max_index=6):
+    print("Probing camera indexes...")
+    for index in range(max_index):
+        probe = cv2.VideoCapture(index)
+        if probe.isOpened():
+            got_frame, frame = probe.read()
+            if got_frame:
+                height, width = frame.shape[:2]
+                print(f"  index {index}: available  ({width}x{height})")
+            else:
+                print(f"  index {index}: opens but returns no frame")
+        probe.release()
+
+
+def run_scanner(camera_source=0):
+    camera = open_camera(camera_source)
 
     references = {letter: hsv.copy() for letter, hsv in DEFAULT_HSV.items()}
     samples_by_color = load_calibration()
@@ -562,4 +591,16 @@ def run_scanner():
 
 
 if __name__ == "__main__":
-    run_scanner()
+    parser = argparse.ArgumentParser(description="Scan a Rubik's cube with a camera and solve it.")
+    parser.add_argument(
+        "--camera",
+        default="0",
+        help="camera index (0, 1, 2...) or a stream URL such as http://192.168.1.50:8080/video",
+    )
+    parser.add_argument("--list-cameras", action="store_true", help="show which camera indexes are available")
+    args = parser.parse_args()
+
+    if args.list_cameras:
+        list_cameras()
+    else:
+        run_scanner(args.camera)
