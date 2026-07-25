@@ -18,6 +18,15 @@ CENTER_LETTER_FOR_FACE = {
     "B": "g",
 }
 
+TOP_COLOR_FOR_FACE = {
+    "U": "g",
+    "R": "y",
+    "F": "y",
+    "D": "b",
+    "L": "y",
+    "B": "y",
+}
+
 COLOR_LETTERS = ["w", "y", "r", "o", "g", "b"]
 
 DEFAULT_HSV = {
@@ -37,6 +46,8 @@ SWATCH_BGR = {
     "g": (60, 160, 60),
     "b": (200, 90, 0),
 }
+
+LETTER_TO_FACE_CHAR = {"y": "U", "r": "R", "b": "F", "w": "D", "o": "L", "g": "B"}
 
 GRID_SIZE = 3
 CELL_SIZE_PX = 70
@@ -62,6 +73,35 @@ def build_grid(frame_shape):
     return cells
 
 
+KMEANS_CLUSTERS = 3
+KMEANS_CRITERIA = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 15, 1.0)
+
+
+def dominant_bgr_cluster(pixels_bgr):
+    attempts = 4
+    _, labels, centers = cv2.kmeans(
+        pixels_bgr, KMEANS_CLUSTERS, None, KMEANS_CRITERIA, attempts, cv2.KMEANS_PP_CENTERS
+    )
+    labels = labels.flatten()
+
+    cluster_sizes = np.bincount(labels, minlength=KMEANS_CLUSTERS)
+    brightness = centers.sum(axis=1)
+
+    not_blown_out = brightness < 720
+    eligible = np.where(not_blown_out)[0] if not_blown_out.any() else np.arange(KMEANS_CLUSTERS)
+
+    largest = eligible[np.argmax(cluster_sizes[eligible])]
+    return pixels_bgr[labels == largest]
+
+
+def unmirror_face(values):
+    unmirrored = []
+    for row in range(GRID_SIZE):
+        row_values = values[row * GRID_SIZE:(row + 1) * GRID_SIZE]
+        unmirrored.extend(reversed(row_values))
+    return unmirrored
+
+
 def read_sticker_hsv(frame, cell):
     cx, cy, cw, ch = cell
     inset = int(cw * 0.3)
@@ -71,19 +111,11 @@ def read_sticker_hsv(frame, cell):
         return np.zeros(3)
 
     patch = cv2.GaussianBlur(patch, (5, 5), 0)
-    pixels = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV).reshape(-1, 3).astype(np.float32)
+    pixels_bgr = patch.reshape(-1, 3).astype(np.float32)
 
-    for _ in range(2):
-        median_sat = np.median(pixels[:, 1])
-        median_val = np.median(pixels[:, 2])
-
-        not_blown_out = pixels[:, 2] < 250
-        close_to_median = (np.abs(pixels[:, 1] - median_sat) < 55) & (np.abs(pixels[:, 2] - median_val) < 55)
-        keep = not_blown_out & close_to_median
-
-        if keep.sum() < 24:
-            break
-        pixels = pixels[keep]
+    dominant_bgr = dominant_bgr_cluster(pixels_bgr)
+    pixels = cv2.cvtColor(dominant_bgr.reshape(-1, 1, 3).astype(np.uint8), cv2.COLOR_BGR2HSV).reshape(-1, 3)
+    pixels = pixels.astype(np.float32)
 
     hue_radians = pixels[:, 0] * (np.pi / 90.0)
     sat_weight = pixels[:, 1] + 1.0
@@ -112,10 +144,10 @@ def build_cost_matrix(samples, references):
     return np.array([[hsv_distance(sample, references[letter]) for letter in COLOR_LETTERS] for sample in samples])
 
 
-def assign_with_quota(samples, references):
+def assign_with_quota(samples, references, quotas=None):
     costs = build_cost_matrix(samples, references)
     sticker_count = len(samples)
-    remaining = {letter: 9 for letter in COLOR_LETTERS}
+    remaining = dict(quotas) if quotas is not None else {letter: 9 for letter in COLOR_LETTERS}
     assigned = [None] * sticker_count
 
     confidence_order = []
@@ -185,12 +217,26 @@ def load_calibration():
     return {letter: [np.array(s, dtype=np.float64) for s in raw.get(letter, [])] for letter in COLOR_LETTERS}
 
 
-def solve_face_colors(samples, references, known_centers, max_rounds=12):
+def solve_face_colors(samples, references, known_centers, fixed_labels=None, max_rounds=12):
+    fixed_labels = fixed_labels or {}
     references = {letter: hsv.copy() for letter, hsv in references.items()}
+
+    free_indices = [i for i in range(len(samples)) if i not in fixed_labels]
+    base_quota = {letter: 9 for letter in COLOR_LETTERS}
+    for letter in fixed_labels.values():
+        base_quota[letter] -= 1
+
     previous_labels = None
 
     for _ in range(max_rounds):
-        labels = assign_with_quota(samples, references)
+        free_labels = assign_with_quota([samples[i] for i in free_indices], references, quotas=dict(base_quota))
+
+        labels = [None] * len(samples)
+        for i, letter in fixed_labels.items():
+            labels[i] = letter
+        for i, letter in zip(free_indices, free_labels):
+            labels[i] = letter
+
         if labels == previous_labels:
             break
         previous_labels = labels
@@ -207,6 +253,121 @@ def solve_face_colors(samples, references, known_centers, max_rounds=12):
                 references[letter] = weighted_hsv_mean(matched, weights)
 
     return labels, references
+
+
+def letters_to_kociemba_string(sticker_letters):
+    return "".join(LETTER_TO_FACE_CHAR[letter] for letter in sticker_letters)
+
+
+def solve_and_report(sticker_letters):
+    scanned_string = "".join(sticker_letters)
+    print(f"\nRaw:  {scanned_string}")
+    for i, face in enumerate(FACE_ORDER):
+        print(f"  {face}: {''.join(sticker_letters[i * 9:(i + 1) * 9])}")
+
+    cube_string = letters_to_kociemba_string(sticker_letters)
+    print(f"Cube: {cube_string}")
+
+    try:
+        print(f"Solution: {kociemba.solve(cube_string)}")
+    except ValueError as e:
+        print(f"Unsolvable, scan has an error: {e}")
+
+
+def edit_face_window(face, initial_letters):
+    letters = list(initial_letters)
+    center_index = GRID_SIZE * GRID_SIZE // 2
+    letters[center_index] = CENTER_LETTER_FOR_FACE[face]
+
+    cell_px = 90
+    gap_px = 6
+    margin = 30
+    grid_span = GRID_SIZE * cell_px + (GRID_SIZE - 1) * gap_px
+
+    cell_rects = [
+        (margin + col * (cell_px + gap_px), margin + row * (cell_px + gap_px), cell_px, cell_px)
+        for row in range(GRID_SIZE)
+        for col in range(GRID_SIZE)
+    ]
+
+    swatch_px = 46
+    swatch_gap = 10
+    palette_span = len(COLOR_LETTERS) * swatch_px + (len(COLOR_LETTERS) - 1) * swatch_gap
+    palette_y = margin + grid_span + 34
+    palette_rects = [
+        (margin + i * (swatch_px + swatch_gap), palette_y, swatch_px, swatch_px) for i in range(len(COLOR_LETTERS))
+    ]
+
+    current_color = COLOR_LETTERS[0]
+    window_name = f"Edit face {face}"
+    cv2.namedWindow(window_name)
+
+    def hit(px, py, rect):
+        rx, ry, rw, rh = rect
+        return rx <= px < rx + rw and ry <= py < ry + rh
+
+    def on_mouse(event, x, y, flags, userdata):
+        nonlocal current_color
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+
+        for letter, rect in zip(COLOR_LETTERS, palette_rects):
+            if hit(x, y, rect):
+                current_color = letter
+                return
+
+        for i, rect in enumerate(cell_rects):
+            if i != center_index and hit(x, y, rect):
+                letters[i] = current_color
+                return
+
+    cv2.setMouseCallback(window_name, on_mouse)
+
+    frame_w = margin * 2 + max(grid_span, palette_span)
+    frame_h = palette_y + swatch_px + 40
+    result = None
+
+    while True:
+        frame = np.full((frame_h, frame_w, 3), 30, dtype=np.uint8)
+
+        for i, rect in enumerate(cell_rects):
+            x, y, w, h = rect
+            cv2.rectangle(frame, (x, y), (x + w, y + h), SWATCH_BGR[letters[i]], -1)
+            is_center = i == center_index
+            border = (0, 255, 0) if is_center else (255, 255, 255)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), border, 2 if is_center else 1)
+
+        for letter, rect in zip(COLOR_LETTERS, palette_rects):
+            x, y, w, h = rect
+            cv2.rectangle(frame, (x, y), (x + w, y + h), SWATCH_BGR[letter], -1)
+            selected = letter == current_color
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0) if selected else (120, 120, 120), 3 if selected else 1)
+
+        cv2.putText(
+            frame,
+            f"Editing face {face} - click a color, then click a cell to repaint it",
+            (margin, palette_y - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            (200, 200, 200),
+            1,
+        )
+        cv2.putText(
+            frame, "ENTER confirm   ESC cancel", (margin, frame_h - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (170, 170, 170), 1
+        )
+
+        cv2.imshow(window_name, frame)
+        key = cv2.waitKey(20) & 0xFF
+
+        if key in (13, 10):
+            result = list(letters)
+            break
+        elif key == 27:
+            result = None
+            break
+
+    cv2.destroyWindow(window_name)
+    return result
 
 
 def draw_hud(frame, cells, samples, labels, face_index, samples_by_color):
@@ -231,14 +392,15 @@ def draw_hud(frame, cells, samples, labels, face_index, samples_by_color):
     if face_index < len(FACE_ORDER):
         face = FACE_ORDER[face_index]
         expected_center = CENTER_LETTER_FOR_FACE[face].upper()
-        header = f"Face {face_index + 1}/6: {face}   center must be {expected_center}"
+        expected_top = TOP_COLOR_FOR_FACE[face].upper()
+        header = f"Face {face_index + 1}/6: {face}   center must be {expected_center}   keep {expected_top} on top"
     else:
         header = "All faces captured"
 
     cv2.putText(frame, header, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2)
     cv2.putText(
         frame,
-        "SPACE capture   u undo   c calibrate face color   r reset   ESC quit",
+        "SPACE capture (then e to edit)   u undo   c calibrate face color   r reset   ESC quit",
         (10, 56),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.48,
@@ -280,6 +442,7 @@ def run_scanner():
         print(f"Loaded {total_loaded} saved calibration samples from {CALIB_FILE}")
 
     captured_faces = []
+    manual_face_letters = {}
     face_index = 0
     recent_frames = []
     center_cell = GRID_SIZE * GRID_SIZE // 2
@@ -327,6 +490,7 @@ def run_scanner():
             samples_by_color = {letter: [] for letter in COLOR_LETTERS}
             save_calibration(samples_by_color)
             captured_faces.clear()
+            manual_face_letters.clear()
             face_index = 0
             print("Reset")
 
@@ -339,13 +503,36 @@ def run_scanner():
         elif key == ord("u") and captured_faces:
             captured_faces.pop()
             face_index -= 1
+            manual_face_letters.pop(face_index, None)
             print(f"Undid face, now on {FACE_ORDER[face_index]}")
 
         elif key == 32 and face_index < len(FACE_ORDER):
-            letter = CENTER_LETTER_FOR_FACE[FACE_ORDER[face_index]]
+            this_face = FACE_ORDER[face_index]
+            letter = CENTER_LETTER_FOR_FACE[this_face]
             calibrate(letter, smoothed_samples[center_cell])
-            captured_faces.append([sample.copy() for sample in smoothed_samples])
-            print(f"Captured {FACE_ORDER[face_index]}")
+            captured_faces.append(unmirror_face([sample.copy() for sample in smoothed_samples]))
+            captured_index = face_index
+            print(f"Captured {this_face}")
+
+            prompt_frame = frame.copy()
+            cv2.putText(
+                prompt_frame,
+                "Press E to review/edit this face, any other key to continue",
+                (10, prompt_frame.shape[0] - 14),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (80, 220, 255),
+                2,
+            )
+            cv2.imshow("Cube Scanner", prompt_frame)
+            choice = cv2.waitKey(0) & 0xFF
+
+            if choice == ord("e"):
+                edited = edit_face_window(this_face, unmirror_face(labels))
+                if edited is not None:
+                    manual_face_letters[captured_index] = edited
+                    print(f"Edited {this_face} manually")
+
             face_index += 1
             if face_index >= len(FACE_ORDER):
                 print("All faces captured, press ESC to solve")
@@ -362,24 +549,16 @@ def run_scanner():
         CENTER_LETTER_FOR_FACE[face]: captured_faces[i][center_cell] for i, face in enumerate(FACE_ORDER)
     }
 
-    sticker_letters, _ = solve_face_colors(all_samples, references, known_centers)
-    for i, face in enumerate(FACE_ORDER):
-        sticker_letters[i * 9 + center_cell] = CENTER_LETTER_FOR_FACE[face]
+    fixed_labels = {}
+    for face_i, face in enumerate(FACE_ORDER):
+        fixed_labels[face_i * 9 + center_cell] = CENTER_LETTER_FOR_FACE[face]
+    for face_i, face_letters in manual_face_letters.items():
+        for cell_i, letter in enumerate(face_letters):
+            fixed_labels[face_i * 9 + cell_i] = letter
 
-    scanned_string = "".join(sticker_letters)
-    print(f"\nRaw:  {scanned_string}")
-    for i, face in enumerate(FACE_ORDER):
-        print(f"  {face}: {''.join(sticker_letters[i * 9:(i + 1) * 9])}")
+    sticker_letters, _ = solve_face_colors(all_samples, references, known_centers, fixed_labels=fixed_labels)
 
-    cube_string = scanned_string
-    for letter, face in [("y", "U"), ("r", "R"), ("b", "F"), ("w", "D"), ("o", "L"), ("g", "B")]:
-        cube_string = cube_string.replace(letter, face)
-    print(f"Cube: {cube_string}")
-
-    try:
-        print(f"Solution: {kociemba.solve(cube_string)}")
-    except ValueError as e:
-        print(f"Unsolvable, scan has an error: {e}")
+    solve_and_report(sticker_letters)
 
 
 if __name__ == "__main__":
