@@ -112,6 +112,35 @@ here since `localhost` is a secure origin.
 5. Repeat for all 6 faces (in U, R, F, D, L, B order), then tap
    **Solve cube**.
 
+## Troubleshooting
+
+**"CORS request blocked" / `file:///api/calibration`**
+This means the page was opened directly from disk (`file://...`) instead of
+through a server. Relative URLs like `/api/calibration` only make sense
+when the page itself was loaded over `http(s)://`. Always open the app via
+the ESP32's address (`http://<esp32-ip>/` or `http://cubus.local/`), or
+during local dev via `python3 -m http.server` + `http://localhost:8000`.
+`app.js` now detects a non-http origin and skips the network call
+entirely (falling back straight to `localStorage`), so this no longer
+throws a scary console error even if you do open it as a file.
+
+**Page freezes / tab hangs when you press "Solve cube"**
+`cube.js`'s `Cube.fromString()` will build a `Cube` object out of *any*
+facelet string, even a physically impossible one (e.g. two stickers
+swapped by a mis-scan). It does not validate legality. `cube.solve()` then
+has no idea the state is impossible - it runs an IDA* search up to depth
+22 looking for a solution that can never exist, which for an illegal cube
+means exploring a huge portion of the search space on the main thread.
+That's what looked like a freeze. `app.js` now checks permutation/parity
+legality (matching corner and edge permutation parity, valid orientation
+sums) right after building the `Cube` object and *before* calling
+`.solve()`. If the scan is illegal, you get an immediate, specific error
+("scan has X wrong") pointing you to Undo + Edit instead of a hung tab.
+Note this only catches *physically impossible* scans - a valid-but-wrong
+scan (e.g. one sticker mislabeled as a color that still forms a legal
+permutation) will solve "successfully" but for the wrong cube, so it's
+still worth double-checking each face with Edit if the result looks off.
+
 ## Known limitations vs. the Python version
 
 - k-means clustering runs in JavaScript on whatever device opens the page,

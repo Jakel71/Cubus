@@ -70,9 +70,20 @@
   var pendingCaptureIndex_editSeed = null; // unmirrored live labels captured at that moment, seeds the edit overlay
 
   // ---------- Calibration persistence ----------
+  // NOTE: fetch("/api/calibration") only works when this page is loaded via
+  // http(s):// (e.g. from the ESP32, or `python3 -m http.server`). If you
+  // open index.html directly from disk (file://), the browser's same-origin
+  // rule turns the relative URL into file:///api/calibration and refuses
+  // it as a CORS violation. That's expected there - we just skip straight
+  // to localStorage in that case instead of letting the console scream.
+  var HAS_HTTP_ORIGIN = (window.location.protocol === "http:" || window.location.protocol === "https:");
+
   function loadCalibration() {
-    fetch("/api/calibration")
-      .then(function (r) { return r.ok ? r.json() : {}; })
+    var networkFetch = HAS_HTTP_ORIGIN
+      ? fetch("/api/calibration").then(function (r) { return r.ok ? r.json() : {}; })
+      : Promise.reject(new Error("no http origin"));
+
+    networkFetch
       .catch(function () {
         try {
           var raw = localStorage.getItem("cubus_calibration");
@@ -99,14 +110,18 @@
     clearTimeout(saveTimer);
     saveTimer = setTimeout(function () {
       var body = JSON.stringify(samplesByColor);
-      fetch("/api/calibration", { method: "POST", headers: { "Content-Type": "application/json" }, body: body })
-        .catch(function () {});
+      if (HAS_HTTP_ORIGIN) {
+        fetch("/api/calibration", { method: "POST", headers: { "Content-Type": "application/json" }, body: body })
+          .catch(function () {});
+      }
       try { localStorage.setItem("cubus_calibration", body); } catch (e) {}
     }, 150);
   }
 
   function resetCalibrationOnServer() {
-    fetch("/api/calibration/reset", { method: "POST" }).catch(function () {});
+    if (HAS_HTTP_ORIGIN) {
+      fetch("/api/calibration/reset", { method: "POST" }).catch(function () {});
+    }
     try { localStorage.removeItem("cubus_calibration"); } catch (e) {}
   }
 
@@ -458,6 +473,33 @@
   }
 
   // ---------- Solve ----------
+  // cubejs's Cube.fromString() happily builds a Cube object out of any
+  // facelet string, even one that is physically impossible (e.g. two
+  // stickers swapped by a scanning mistake). cube.solve() has no idea
+  // it's impossible - it just runs IDA* up to depth 22 looking for a
+  // solution that can never be found, which for an illegal cube means
+  // exhausting a gigantic search tree on the main thread. That's what
+  // was freezing the tab. So: verify legality ourselves first and bail
+  // out immediately with a helpful message if the scan doesn't check out.
+  function findIllegalCubeReason(cube) {
+    var seenCp = {}, i;
+    for (i = 0; i < cube.cp.length; i++) {
+      if (seenCp[cube.cp[i]]) return "a corner piece appears twice";
+      seenCp[cube.cp[i]] = true;
+    }
+    var seenEp = {};
+    for (i = 0; i < cube.ep.length; i++) {
+      if (seenEp[cube.ep[i]]) return "an edge piece appears twice";
+      seenEp[cube.ep[i]] = true;
+    }
+    var coSum = cube.co.reduce(function (a, b) { return a + b; }, 0);
+    if (coSum % 3 !== 0) return "corner orientations don't add up (a corner sticker is probably misread)";
+    var eoSum = cube.eo.reduce(function (a, b) { return a + b; }, 0);
+    if (eoSum % 2 !== 0) return "edge orientations don't add up (an edge sticker is probably misread)";
+    if (cube.cornerParity() !== cube.edgeParity()) return "corner/edge permutation parity mismatch (two stickers are likely swapped)";
+    return null;
+  }
+
   var solverReady = false;
   function initSolverAsync() {
     setStatus("Loading solver engine\u2026");
@@ -536,21 +578,53 @@
     kLine.textContent = "Facelets: " + kociembaString;
     elResults.appendChild(kLine);
 
+    var cube;
     try {
-      var cube = window.Cube.fromString(kociembaString);
-      var solution = cube.solve();
-      var solLine = document.createElement("div");
-      solLine.className = "solutionBlock";
-      solLine.textContent = solution;
-      elResults.appendChild(solLine);
-      setStatus("Solved");
+      cube = window.Cube.fromString(kociembaString);
     } catch (e) {
-      var errLine = document.createElement("div");
-      errLine.className = "warnBlock";
-      errLine.textContent = "Unsolvable \u2014 scan has an error (" + e.message + ")";
-      elResults.appendChild(errLine);
+      var parseErrLine = document.createElement("div");
+      parseErrLine.className = "warnBlock";
+      parseErrLine.textContent = "Scan has an error (" + e.message + "). Fix a face with Undo + Edit, then solve again.";
+      elResults.appendChild(parseErrLine);
       setStatus("Solve failed");
+      return;
     }
+
+    var illegalReason = findIllegalCubeReason(cube);
+    if (illegalReason) {
+      var illegalLine = document.createElement("div");
+      illegalLine.className = "warnBlock";
+      illegalLine.textContent = "This isn't a physically valid cube state (" + illegalReason +
+        "). That means at least one sticker was misread during scanning. Fix the affected face with Undo + Edit, then solve again.";
+      elResults.appendChild(illegalLine);
+      setStatus("Solve failed \u2014 invalid scan");
+      return;
+    }
+
+    setStatus("Solving\u2026");
+    elSolveBtn.disabled = true;
+    // Yield one frame so "Solving..." actually paints before the
+    // (synchronous, CPU-heavy) search runs.
+    requestAnimationFrame(function () {
+      setTimeout(function () {
+        try {
+          var solution = cube.solve();
+          var solLine = document.createElement("div");
+          solLine.className = "solutionBlock";
+          solLine.textContent = solution;
+          elResults.appendChild(solLine);
+          setStatus("Solved");
+        } catch (e) {
+          var errLine = document.createElement("div");
+          errLine.className = "warnBlock";
+          errLine.textContent = "Unsolvable \u2014 scan has an error (" + e.message + ")";
+          elResults.appendChild(errLine);
+          setStatus("Solve failed");
+        } finally {
+          elSolveBtn.disabled = false;
+        }
+      }, 0);
+    });
   }
 
   // ---------- Boot ----------
