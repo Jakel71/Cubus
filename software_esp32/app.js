@@ -38,6 +38,7 @@
   var elBannerContinue = document.getElementById("captureBannerContinue");
   var elSolveSection = document.getElementById("solveSection");
   var elSolveBtn = document.getElementById("solveBtn");
+  var elNewCubeBtn = document.getElementById("newCubeBtn");
   var elResults = document.getElementById("results");
 
   var elEditOverlay = document.getElementById("editOverlay");
@@ -161,8 +162,15 @@
     });
   }
 
+  // Fraction of the frame's short side taken by one sticker cell. The whole
+  // 3x3 outline spans 3.28x this (3 cells + 2 gaps of 0.14 cell each), so the
+  // hard ceiling is 1/3.28 = 0.305 before the grid runs off the top and bottom
+  // edges. 0.27 puts the outline at ~89% of the short side, which leaves just
+  // enough margin to see the cube's edges while lining it up.
+  var CELL_FRACTION_OF_FRAME = 0.27;
+
   function buildGrid(frameW, frameH) {
-    var cellSizePx = Math.round(Math.min(frameW, frameH) * 0.19);
+    var cellSizePx = Math.round(Math.min(frameW, frameH) * CELL_FRACTION_OF_FRAME);
     var cellGapPx = Math.round(cellSizePx * 0.14);
     var gridSpan = GRID_SIZE * cellSizePx + (GRID_SIZE - 1) * cellGapPx;
     var left = Math.round(frameW / 2 - gridSpan / 2);
@@ -395,6 +403,23 @@
     updateHeader();
     updateSolveVisibility();
     setStatus("Reset");
+  });
+
+  // Start a fresh scan without touching `references` / `samplesByColor`, so the
+  // color calibration built up during the last cube (and anything loaded from
+  // the server / localStorage) carries straight over to the next one. This is
+  // the difference from "Reset all", which deliberately wipes calibration too.
+  elNewCubeBtn.addEventListener("click", function () {
+    capturedFaces = [];
+    manualFaceLetters = {};
+    faceIndex = 0;
+    pendingCaptureIndex = null;
+    pendingCaptureIndex_editSeed = null;
+    elBanner.style.display = "none";
+    elResults.innerHTML = "";
+    updateHeader();
+    updateSolveVisibility();
+    setStatus("New scan — calibration kept");
   });
 
   elFacingSelect.addEventListener("change", function () {

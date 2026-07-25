@@ -2,55 +2,112 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101216">
 <title>Cubus &mdash; Cube Scanner</title>
 <style>
   :root {
-    --bg: #16181c;
-    --panel: #1f2228;
-    --border: #33373f;
-    --text: #e8e8ea;
-    --muted: #9099a6;
-    --accent: #50c2ff;
-    --warn: #ffb454;
-    --good: #58d68d;
+    --bg: #101216;
+    --bg-soft: #171a20;
+    --panel: #1e222a;
+    --panel-hi: #262b34;
+    --border: #333945;
+    --border-hi: #454d5c;
+    --text: #f0f2f5;
+    --muted: #a8b1bf;
+    --accent: #61c8ff;
+    --accent-ink: #06121c;
+    --warn: #ffc36b;
+    --good: #6fdd9c;
+
+    --radius: 12px;
+    --radius-lg: 16px;
+    --gap: 14px;
+    --pad-x: clamp(14px, 4vw, 22px);
+    --shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
   }
+
   * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
   body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    padding-bottom: 40px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    padding-bottom: calc(48px + env(safe-area-inset-bottom));
+    -webkit-font-smoothing: antialiased;
   }
+
+  /* ---------- Layout shell ---------- */
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 var(--pad-x);
+  }
+  .columns {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--gap);
+    align-items: start;
+  }
+  .col { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
+
+  /* ---------- Header ---------- */
   header {
-    padding: 14px 16px 8px;
+    padding: 18px 0 14px;
   }
   header h1 {
-    margin: 0 0 2px;
-    font-size: 1.15rem;
-    letter-spacing: 0.02em;
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  header h1::before {
+    content: "";
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    background:
+      linear-gradient(135deg, var(--accent) 0 50%, var(--good) 50% 100%);
+    flex: none;
   }
   header p {
-    margin: 0;
+    margin: 4px 0 0;
     color: var(--muted);
-    font-size: 0.85rem;
+    font-size: 0.95rem;
   }
+
+  /* ---------- Step instruction (sticky, always visible) ---------- */
   #headerText {
-    margin: 10px 16px 0;
-    padding: 10px 12px;
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    padding: 14px 16px;
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    font-size: 0.92rem;
+    border-left: 4px solid var(--accent);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    font-size: 1.05rem;
+    font-weight: 600;
+    line-height: 1.45;
   }
+
+  /* ---------- Camera stage ---------- */
   .stageWrap {
     position: relative;
-    margin: 12px 16px;
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     overflow: hidden;
     border: 1px solid var(--border);
     background: #000;
+    box-shadow: var(--shadow);
   }
   #stage {
     display: block;
@@ -59,197 +116,393 @@
   }
   video { display: none; }
 
-  .controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin: 0 16px 8px;
+  /* ---------- Cards ---------- */
+  .card {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
   }
+  .cardTitle {
+    margin: 0 0 10px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ---------- Buttons ---------- */
   button {
     font: inherit;
-    font-size: 0.85rem;
-    padding: 10px 14px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
+    font-size: 0.95rem;
+    font-weight: 600;
+    padding: 12px 16px;
+    min-height: 48px;
+    border-radius: 10px;
+    border: 1px solid var(--border-hi);
     background: var(--panel);
     color: var(--text);
     cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
   }
-  button:active { transform: translateY(1px); }
-  button:disabled { opacity: 0.4; cursor: default; }
-  button.primary { background: var(--accent); color: #0a1520; border-color: var(--accent); font-weight: 600; }
+  button:hover:not(:disabled) { background: var(--panel-hi); border-color: #55607250; }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: 0.35; cursor: not-allowed; }
+  button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  button.primary {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-color: var(--accent);
+    font-weight: 700;
+  }
+  button.primary:hover:not(:disabled) { background: #7ad2ff; border-color: #7ad2ff; }
 
+  .controls {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  #captureBtn {
+    font-size: 1.05rem;
+    min-height: 56px;
+  }
+  .controlsSecondary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+
+  /* ---------- Settings ---------- */
   .settingsRow {
     display: flex;
     align-items: center;
-    gap: 14px;
-    margin: 0 16px 8px;
-    font-size: 0.85rem;
-    color: var(--muted);
+    gap: 20px;
     flex-wrap: wrap;
+    font-size: 0.95rem;
+    color: var(--text);
   }
-  select { font: inherit; padding: 6px 8px; border-radius: 6px; background: var(--panel); color: var(--text); border: 1px solid var(--border); }
-  label { display: flex; align-items: center; gap: 6px; }
+  select {
+    font: inherit;
+    font-size: 0.95rem;
+    padding: 9px 12px;
+    min-height: 42px;
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border-hi);
+    cursor: pointer;
+  }
+  select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  label {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    cursor: pointer;
+  }
+  input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    margin: 0;
+  }
+  input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  #countsText {
-    margin: 0 16px 4px;
-    font-size: 0.8rem;
+  /* ---------- Status + counts ---------- */
+  .statusCard { display: flex; flex-direction: column; gap: 10px; }
+  .metaLabel {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
     color: var(--muted);
-    letter-spacing: 0.03em;
+  }
+  #countsText {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.95rem;
+    letter-spacing: 0.08em;
+    color: var(--text);
+    word-spacing: 0.35em;
+    min-height: 1.4em;
   }
   #statusLine {
-    margin: 0 16px 8px;
-    font-size: 0.82rem;
+    font-size: 0.95rem;
     color: var(--accent);
-    min-height: 1.1em;
+    min-height: 1.5em;
+    word-break: break-word;
+  }
+  #statusLine:not(:empty)::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-right: 8px;
+    vertical-align: 0.12em;
   }
 
+  /* ---------- Capture banner ---------- */
   #captureBanner {
     display: none;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
-    margin: 0 16px 10px;
-    padding: 10px 12px;
-    background: #223146;
-    border: 1px solid #345b82;
-    border-radius: 10px;
-    font-size: 0.88rem;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 14px 16px;
+    background: #1d2c40;
+    border: 1px solid #3a6690;
+    border-radius: var(--radius);
+    font-size: 1rem;
+    font-weight: 600;
+    box-shadow: var(--shadow);
   }
-  #captureBanner .bannerBtns { display: flex; gap: 8px; }
+  #captureBanner .bannerBtns { display: flex; gap: 10px; flex: 1 1 auto; justify-content: flex-end; }
+  #captureBanner .bannerBtns button { flex: 0 1 140px; }
 
-  #solveSection { display: none; margin: 18px 16px; }
-  #results { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+  /* ---------- Solve ---------- */
+  #solveSection { display: none; }
+  .solveActions { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  #solveBtn { width: 100%; font-size: 1.05rem; min-height: 56px; }
+  #newCubeBtn { width: 100%; }
+  #newCubeBtn .btnSub {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--muted);
+    line-height: 1.3;
+    margin-top: 1px;
+  }
+  #results { margin-top: 12px; display: flex; flex-direction: column; gap: 12px; }
   .resultBlock {
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 12px;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin: 0;
     font-family: "SF Mono", Menlo, Consolas, monospace;
-    font-size: 0.82rem;
+    font-size: 0.92rem;
+    line-height: 1.7;
+    letter-spacing: 0.06em;
     white-space: pre-wrap;
     word-break: break-word;
+    overflow-x: auto;
   }
   .solutionBlock {
     background: #14261c;
-    border: 1px solid #2c5c3f;
+    border: 1px solid #34714d;
     color: var(--good);
-    border-radius: 8px;
-    padding: 12px;
+    border-radius: 10px;
+    padding: 16px;
     font-family: "SF Mono", Menlo, Consolas, monospace;
-    font-size: 1rem;
-    letter-spacing: 0.03em;
+    font-size: 1.15rem;
+    font-weight: 600;
+    line-height: 1.9;
+    letter-spacing: 0.09em;
+    word-spacing: 0.3em;
     word-break: break-word;
   }
   .warnBlock {
-    background: #322217;
-    border: 1px solid #6a4a20;
+    background: #33230f;
+    border: 1px solid #7d5822;
     color: var(--warn);
-    border-radius: 8px;
-    padding: 10px 12px;
-    font-size: 0.85rem;
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 0.98rem;
+    line-height: 1.6;
   }
 
-  /* Edit overlay */
+  /* ---------- Edit overlay ---------- */
   #editOverlay {
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.88);
+    background: rgba(4, 6, 10, 0.9);
     z-index: 20;
     align-items: center;
     justify-content: center;
-    padding: 20px;
+    padding: 18px;
+    overflow-y: auto;
   }
   #editPanel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 18px;
-    max-width: 360px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-hi);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    max-width: 400px;
     width: 100%;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   }
-  #editTitle { font-size: 1rem; margin-bottom: 12px; }
+  #editTitle {
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .editHint {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin-bottom: 16px;
+  }
   #editGrid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 6px;
-    margin-bottom: 16px;
+    gap: 8px;
+    margin-bottom: 20px;
   }
   .editCell {
     aspect-ratio: 1 / 1;
-    border-radius: 6px;
-    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.22);
     cursor: pointer;
+    transition: transform 0.1s ease;
   }
-  .editCell.centerCell { border: 2px solid var(--good); cursor: default; }
-  #editPalette { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .editCell:hover { transform: scale(1.04); }
+  .editCell.centerCell {
+    border: 3px solid var(--good);
+    cursor: default;
+  }
+  .editCell.centerCell:hover { transform: none; }
+  #editPalette {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+    margin-bottom: 20px;
+  }
   #editPalette .swatch {
-    width: 40px; height: 40px;
-    border-radius: 6px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 0.75rem; font-weight: 700; color: rgba(0,0,0,0.55);
-    border: 2px solid rgba(255,255,255,0.15);
+    aspect-ratio: 1 / 1;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    font-weight: 800;
+    color: rgba(0, 0, 0, 0.6);
+    border: 3px solid rgba(255, 255, 255, 0.15);
     cursor: pointer;
   }
-  #editPalette .swatch.selected { border-color: var(--accent); }
-  #editButtons { display: flex; justify-content: flex-end; gap: 8px; }
+  #editPalette .swatch.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(97, 200, 255, 0.28);
+  }
+  #editButtons { display: flex; gap: 10px; }
+  #editButtons button { flex: 1; }
 
-  footer { margin: 24px 16px 0; color: var(--muted); font-size: 0.75rem; }
+  footer {
+    margin-top: 28px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.85rem;
+    line-height: 1.6;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+    .editCell:hover { transform: none; }
+  }
+
+  /* ---------- Wide screens: camera beside the controls ---------- */
+  @media (min-width: 900px) {
+    .columns { grid-template-columns: minmax(0, 1.35fr) minmax(340px, 1fr); gap: 20px; }
+    #headerText { position: static; }
+    .controlsSecondary { grid-template-columns: repeat(3, 1fr); }
+  }
 </style>
 </head>
 <body>
 
-<header>
-  <h1>Cubus</h1>
-  <p>Scan all six faces, then solve.</p>
-</header>
+<div class="page">
 
-<div id="headerText">Loading camera&hellip;</div>
+  <header>
+    <h1>Cubus</h1>
+    <p>Scan all six faces, then solve.</p>
+  </header>
 
-<div class="stageWrap">
-  <video id="video" autoplay playsinline muted></video>
-  <canvas id="stage"></canvas>
+  <div class="columns">
+
+    <!-- Left column: what to do now + the camera -->
+    <div class="col">
+      <div id="headerText">Loading camera&hellip;</div>
+
+      <div class="stageWrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="stage"></canvas>
+      </div>
+    </div>
+
+    <!-- Right column: actions, settings, status, results -->
+    <div class="col">
+
+      <div class="card">
+        <p class="cardTitle">Actions</p>
+        <div class="controls">
+          <button id="captureBtn" class="primary">Capture face</button>
+          <div class="controlsSecondary">
+            <button id="calibrateBtn">Calibrate</button>
+            <button id="undoBtn">Undo</button>
+            <button id="resetBtn">Reset all</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="captureBanner">
+        <span id="captureBannerText"></span>
+        <span class="bannerBtns">
+          <button id="captureBannerEdit">Edit colors</button>
+          <button id="captureBannerContinue" class="primary">Continue</button>
+        </span>
+      </div>
+
+      <div class="card">
+        <p class="cardTitle">Camera</p>
+        <div class="settingsRow">
+          <label for="facingSelect">Lens
+            <select id="facingSelect">
+              <option value="environment" selected>Rear</option>
+              <option value="user">Front</option>
+            </select>
+          </label>
+          <label for="mirrorCheck"><input type="checkbox" id="mirrorCheck"> Mirror preview</label>
+        </div>
+      </div>
+
+      <div class="card statusCard">
+        <div>
+          <p class="metaLabel">Calibration samples</p>
+          <div id="countsText"></div>
+        </div>
+        <div>
+          <p class="metaLabel">Status</p>
+          <div id="statusLine"></div>
+        </div>
+      </div>
+
+      <div id="solveSection">
+        <div class="solveActions">
+          <button id="solveBtn" class="primary">Solve cube</button>
+          <button id="newCubeBtn">
+            Solve another cube
+            <span class="btnSub">Clears the scan, keeps your calibration</span>
+          </button>
+        </div>
+        <div id="results"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>Two-phase solving powered by cube.js (Herbert Kociemba's algorithm), running locally in your browser.</footer>
+
 </div>
-
-<div class="controls">
-  <button id="captureBtn" class="primary">Capture face</button>
-  <button id="calibrateBtn">Calibrate center</button>
-  <button id="undoBtn">Undo</button>
-  <button id="resetBtn">Reset all</button>
-</div>
-
-<div class="settingsRow">
-  <label>Camera:
-    <select id="facingSelect">
-      <option value="environment" selected>Rear</option>
-      <option value="user">Front</option>
-    </select>
-  </label>
-  <label><input type="checkbox" id="mirrorCheck"> Mirror preview</label>
-</div>
-
-<div id="countsText"></div>
-<div id="statusLine"></div>
-
-<div id="captureBanner">
-  <span id="captureBannerText"></span>
-  <span class="bannerBtns">
-    <button id="captureBannerEdit">Edit</button>
-    <button id="captureBannerContinue" class="primary">Continue</button>
-  </span>
-</div>
-
-<div id="solveSection">
-  <button id="solveBtn" class="primary">Solve cube</button>
-  <div id="results"></div>
-</div>
-
-<footer>Two-phase solving powered by cube.js (Herbert Kociemba's algorithm), running locally in your browser.</footer>
 
 <div id="editOverlay">
   <div id="editPanel">
     <div id="editTitle">Editing face</div>
+    <p class="editHint">Pick a color below, then tap any sticker to correct it. The center is fixed.</p>
     <div id="editGrid"></div>
     <div id="editPalette"></div>
     <div id="editButtons">
@@ -259,9 +512,15 @@
   </div>
 </div>
 
+<!-- The ?v= tags are cache busters. Browsers (and the ESP32's own client)
+     hold on to these files aggressively, so a plain reload can keep running
+     an old app.js long after the file on disk changed. Bump the number
+     whenever you edit one of these and the browser will refetch it.
+     ESP32 WebServer's server.uri() ignores the query string, so this
+     resolves to the same LittleFS file on the device. -->
 <script src="cubejs.js"></script>
-<script src="algorithm.js"></script>
-<script src="vision.js"></script>
-<script src="app.js"></script>
+<script src="algorithm.js?v=3"></script>
+<script src="vision.js?v=3"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>
