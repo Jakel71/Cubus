@@ -40,11 +40,24 @@ const char *WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
 // Fallback access point, used if the WiFi join above fails
 const char *AP_SSID = "Cubus-Setup";
-const char *AP_PASSWORD = "cubuscube"; // must be 8+ chars
+const char *AP_PASSWORD = "012345678"; // must be 8+ chars
 
 const unsigned long WIFI_CONNECT_TIMEOUT_MS = 12000;
 const char *CALIBRATION_PATH = "/calibration.json";
 const char *MDNS_NAME = "cubus"; // reachable at http://cubus.local
+
+
+// Lower TX power = less current draw = less heat, and often more stable
+// on marginal 5V supplies/USB cables (the C3's radio can spike ~300+mA at
+// full power, which brownouts a lot of "5V 1A" chargers and cheap cables -
+// that instability/heat combo is usually a power-supply symptom, not a
+// software bug). Full power is WIFI_POWER_19_5dBm; this cuts it down a
+// lot while still giving plenty of range for a phone/laptop on the same
+// LAN. Raise it (toward WIFI_POWER_19_5dBm) if you need more range and
+// have solid power; lower it further (WIFI_POWER_8_5dBm, WIFI_POWER_7dBm)
+// if it's still hot/unstable.
+const wifi_power_t WIFI_TX_POWER = WIFI_POWER_5dBm;
+
 
 WebServer server(80);
 
@@ -53,6 +66,7 @@ WebServer server(80);
 // ---------------------------------------------------------------------
 void connectWiFi() {
   WiFi.mode(WIFI_STA);
+  WiFi.setTxPower(WIFI_TX_POWER);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.printf("Connecting to WiFi \"%s\"", WIFI_SSID);
 
@@ -64,11 +78,14 @@ void connectWiFi() {
   Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
+    // Some cores reset TX power on connect - reassert it.
+    WiFi.setTxPower(WIFI_TX_POWER);
     Serial.print("Connected. IP address: ");
     Serial.println(WiFi.localIP());
   } else {
     Serial.println("WiFi join failed - starting fallback access point.");
     WiFi.mode(WIFI_AP);
+    WiFi.setTxPower(WIFI_TX_POWER);
     WiFi.softAP(AP_SSID, AP_PASSWORD);
     Serial.print("AP SSID: ");
     Serial.println(AP_SSID);
