@@ -23,6 +23,13 @@
   var canvas = document.getElementById("stage");
   var ctx = canvas.getContext("2d", { willReadFrequently: true });
 
+  // Hidden buffer that always holds the true, unmirrored camera frame.
+  // Sticker sampling reads from THIS, never from the visible canvas, so the
+  // "Mirror preview" checkbox is purely cosmetic and can never change what
+  // colors get captured. See renderFrame() and readStickerHsv().
+  var rawCanvas = document.createElement("canvas");
+  var rawCtx = rawCanvas.getContext("2d", { willReadFrequently: true });
+
   var elHeader = document.getElementById("headerText");
   var elCounts = document.getElementById("countsText");
   var elCaptureBtn = document.getElementById("captureBtn");
@@ -65,6 +72,12 @@
   var liveLabels = new Array(GRID_SIZE * GRID_SIZE).fill("w");
 
   var capturedFaces = []; // array of 9-length hsv-triplet arrays, already unmirrored
+  // Same faces, WITHOUT the unmirrorFace() correction. Whether a given
+  // camera's raw feed needs that correction turns out to vary (it depends
+  // on facing/device/browser), so we keep both orientations and let the
+  // solver auto-pick whichever one comes out as a physically valid cube.
+  // See computeStickerLetters() / the solve handler.
+  var capturedFacesMirrored = [];
   var manualFaceLetters = {}; // faceIndex -> [9 letters]
   var faceIndex = 0;
   var pendingCaptureIndex = null; // face index currently shown in the capture banner
@@ -176,6 +189,8 @@
     }).then(function () {
       canvas.width = video.videoWidth || 1280;
       canvas.height = video.videoHeight || 720;
+      rawCanvas.width = canvas.width;
+      rawCanvas.height = canvas.height;
       cells = buildGrid(canvas.width, canvas.height);
     }).catch(function (err) {
       setStatus("Camera error: " + err.message);
@@ -213,11 +228,11 @@
     var px = cell.x + inset, py = cell.y + inset;
     var pw = cell.w - 2 * inset, ph = cell.h - 2 * inset;
     if (pw <= 0 || ph <= 0) return [0, 0, 0];
-    if (px < 0 || py < 0 || px + pw > canvas.width || py + ph > canvas.height) return [0, 0, 0];
+    if (px < 0 || py < 0 || px + pw > rawCanvas.width || py + ph > rawCanvas.height) return [0, 0, 0];
 
     var imgData;
     try {
-      imgData = ctx.getImageData(px, py, pw, ph);
+      imgData = rawCtx.getImageData(px, py, pw, ph);
     } catch (e) {
       return [0, 0, 0];
     }
@@ -277,12 +292,18 @@
   // ---------- Render loop (video + grid overlay) ----------
   function renderFrame() {
     if (video.readyState >= 2) {
+      // Always capture the true, unmirrored frame here first.
+      rawCtx.drawImage(video, 0, 0, rawCanvas.width, rawCanvas.height);
+
+      // The visible canvas is drawn FROM the raw buffer, with an optional
+      // flip applied only for on-screen display. readStickerHsv() never
+      // touches this canvas, so toggling the checkbox can't affect capture.
       ctx.save();
       if (elMirrorCheck.checked) {
         ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
       }
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(rawCanvas, 0, 0);
       ctx.restore();
 
       cells.forEach(function (cell, i) {
@@ -355,6 +376,7 @@
     var snapshot = smoothedSamples.map(function (s) { return s.slice(); });
     var unmirrored = Algo.unmirrorFace(snapshot);
     capturedFaces.push(unmirrored);
+    capturedFacesMirrored.push(snapshot);
 
     var unmirroredLabels = Algo.unmirrorFace(liveLabels.slice());
     pendingCaptureIndex = faceIndex;
@@ -403,6 +425,7 @@
   elUndoBtn.addEventListener("click", function () {
     if (!capturedFaces.length) return;
     capturedFaces.pop();
+    capturedFacesMirrored.pop();
     faceIndex -= 1;
     delete manualFaceLetters[faceIndex];
     updateHeader();
@@ -415,6 +438,7 @@
     samplesByColor = {};
     COLOR_LETTERS.forEach(function (l) { references[l] = DEFAULT_HSV[l].slice(); samplesByColor[l] = []; });
     capturedFaces = [];
+    capturedFacesMirrored = [];
     manualFaceLetters = {};
     faceIndex = 0;
     elResults.innerHTML = "";
@@ -431,6 +455,7 @@
   // the difference from "Reset all", which deliberately wipes calibration too.
   elNewCubeBtn.addEventListener("click", function () {
     capturedFaces = [];
+    capturedFacesMirrored = [];
     manualFaceLetters = {};
     faceIndex = 0;
     pendingCaptureIndex = null;
@@ -561,42 +586,102 @@
     }, 30);
   }
 
-  elSolveBtn.addEventListener("click", function () {
-    if (!solverReady) { setStatus("Solver still loading, please wait\u2026"); return; }
-    if (capturedFaces.length < FACE_ORDER.length) return;
-
+  // Runs the same color-assignment pipeline that used to be inline in the
+  // click handler, but parameterized on which set of per-face samples/manual
+  // overrides to use - so it can be called once for the standard orientation
+  // and once for the mirrored one.
+  function computeStickerLetters(faces, manualLetters) {
     var allSamples = [];
-    capturedFaces.forEach(function (face) { face.forEach(function (s) { allSamples.push(s); }); });
+    faces.forEach(function (face) { face.forEach(function (s) { allSamples.push(s); }); });
 
     var knownCenters = {};
     FACE_ORDER.forEach(function (face, i) {
-      knownCenters[CENTER_LETTER_FOR_FACE[face]] = capturedFaces[i][CENTER_CELL];
+      knownCenters[CENTER_LETTER_FOR_FACE[face]] = faces[i][CENTER_CELL];
     });
 
     var fixedLabels = {};
     FACE_ORDER.forEach(function (face, i) {
       fixedLabels[i * 9 + CENTER_CELL] = CENTER_LETTER_FOR_FACE[face];
     });
-    Object.keys(manualFaceLetters).forEach(function (faceIdxStr) {
+    Object.keys(manualLetters).forEach(function (faceIdxStr) {
       var faceIdx = parseInt(faceIdxStr, 10);
-      manualFaceLetters[faceIdx].forEach(function (letter, cellIdx) {
+      manualLetters[faceIdx].forEach(function (letter, cellIdx) {
         fixedLabels[faceIdx * 9 + cellIdx] = letter;
       });
     });
 
     var out = Algo.solveFaceColors(allSamples, references, knownCenters, fixedLabels);
-    var stickerLetters = out.labels;
+    return out.labels;
+  }
 
-    renderResults(stickerLetters);
+  elSolveBtn.addEventListener("click", function () {
+    if (!solverReady) { setStatus("Solver still loading, please wait\u2026"); return; }
+    if (capturedFaces.length < FACE_ORDER.length) return;
+
+    // manualFaceLetters holds edits made in the standard orientation. For
+    // the mirrored candidate, the same edits need mirroring too (unmirrorFace
+    // is its own inverse, so applying it again converts standard -> mirrored).
+    var mirroredManualLetters = {};
+    Object.keys(manualFaceLetters).forEach(function (faceIdxStr) {
+      mirroredManualLetters[faceIdxStr] = Algo.unmirrorFace(manualFaceLetters[faceIdxStr]);
+    });
+
+    var standardLetters = computeStickerLetters(capturedFaces, manualFaceLetters);
+    var mirroredLetters = computeStickerLetters(capturedFacesMirrored, mirroredManualLetters);
+
+    renderResults(standardLetters, mirroredLetters);
   });
 
-  function renderResults(stickerLetters) {
-    elResults.innerHTML = "";
-
+  // Checks one candidate sticker-letter array for validity (color counts,
+  // parseable facelet string, legal permutation/orientation). Returns
+  // { ok: true, cube, kociembaString } or { ok: false, reason }.
+  function evaluateCandidate(stickerLetters) {
     var counts = {};
     COLOR_LETTERS.forEach(function (l) { counts[l] = 0; });
     stickerLetters.forEach(function (l) { counts[l] += 1; });
     var bad = COLOR_LETTERS.filter(function (l) { return counts[l] !== 9; });
+    if (bad.length) {
+      return { ok: false, reason: "each color needs exactly 9 stickers: " +
+        bad.map(function (l) { return l.toUpperCase() + "=" + counts[l]; }).join(", ") };
+    }
+
+    var kociembaString = Algo.lettersToKociembaString(stickerLetters);
+
+    var cube;
+    try {
+      cube = window.Cube.fromString(kociembaString);
+    } catch (e) {
+      return { ok: false, reason: "scan has an error (" + e.message + ")" };
+    }
+
+    var illegalReason = findIllegalCubeReason(cube);
+    if (illegalReason) {
+      return { ok: false, reason: "not a physically valid cube state (" + illegalReason + ")" };
+    }
+
+    return { ok: true, cube: cube, kociembaString: kociembaString };
+  }
+
+  function renderResults(standardLetters, mirroredLetters) {
+    elResults.innerHTML = "";
+
+    var standardResult = evaluateCandidate(standardLetters);
+    var usedMirrored = false;
+    var chosen = standardResult;
+    var stickerLetters = standardLetters;
+
+    // Whether the raw camera feed needs the left/right sticker correction
+    // varies by facing/device/browser. If the standard orientation comes out
+    // physically invalid, automatically retry with the opposite orientation
+    // before giving up, instead of assuming the scan itself was bad.
+    if (!standardResult.ok) {
+      var mirroredResult = evaluateCandidate(mirroredLetters);
+      if (mirroredResult.ok) {
+        chosen = mirroredResult;
+        stickerLetters = mirroredLetters;
+        usedMirrored = true;
+      }
+    }
 
     var pre = document.createElement("pre");
     pre.className = "resultBlock";
@@ -607,44 +692,31 @@
     pre.textContent = lines.join("\n");
     elResults.appendChild(pre);
 
-    if (bad.length) {
+    if (!chosen.ok) {
       var warn = document.createElement("div");
       warn.className = "warnBlock";
-      warn.textContent = "Each color needs exactly 9 stickers: " +
-        bad.map(function (l) { return l.toUpperCase() + "=" + counts[l]; }).join(", ") +
+      warn.textContent = "Couldn't find a valid cube in either camera orientation \u2014 standard: " +
+        standardResult.reason + "; mirrored: " + evaluateCandidate(mirroredLetters).reason +
         ". Fix a face with Undo + Edit, then solve again.";
       elResults.appendChild(warn);
-      return;
-    }
-
-    var kociembaString = Algo.lettersToKociembaString(stickerLetters);
-    var kLine = document.createElement("div");
-    kLine.className = "resultBlock";
-    kLine.textContent = "Facelets: " + kociembaString;
-    elResults.appendChild(kLine);
-
-    var cube;
-    try {
-      cube = window.Cube.fromString(kociembaString);
-    } catch (e) {
-      var parseErrLine = document.createElement("div");
-      parseErrLine.className = "warnBlock";
-      parseErrLine.textContent = "Scan has an error (" + e.message + "). Fix a face with Undo + Edit, then solve again.";
-      elResults.appendChild(parseErrLine);
       setStatus("Solve failed");
       return;
     }
 
-    var illegalReason = findIllegalCubeReason(cube);
-    if (illegalReason) {
-      var illegalLine = document.createElement("div");
-      illegalLine.className = "warnBlock";
-      illegalLine.textContent = "This isn't a physically valid cube state (" + illegalReason +
-        "). That means at least one sticker was misread during scanning. Fix the affected face with Undo + Edit, then solve again.";
-      elResults.appendChild(illegalLine);
-      setStatus("Solve failed \u2014 invalid scan");
-      return;
+    if (usedMirrored) {
+      var autoLine = document.createElement("div");
+      autoLine.className = "warnBlock";
+      autoLine.textContent = "Standard orientation wasn't a valid cube (" + standardResult.reason +
+        "), so this was auto-corrected to the mirrored orientation.";
+      elResults.appendChild(autoLine);
     }
+
+    var kLine = document.createElement("div");
+    kLine.className = "resultBlock";
+    kLine.textContent = "Facelets: " + chosen.kociembaString;
+    elResults.appendChild(kLine);
+
+    var cube = chosen.cube;
 
     setStatus("Solving\u2026");
     elSolveBtn.disabled = true;
