@@ -443,6 +443,7 @@
     faceIndex = 0;
     elResults.innerHTML = "";
     resetCalibrationOnServer();
+    clearInterval(solutionPollTimer);
     updateCounts();
     updateHeader();
     updateSolveVisibility();
@@ -462,6 +463,7 @@
     pendingCaptureIndex_editSeed = null;
     elBanner.style.display = "none";
     elResults.innerHTML = "";
+    clearInterval(solutionPollTimer);
     updateHeader();
     updateSolveVisibility();
     setStatus("New scan — calibration kept");
@@ -731,6 +733,7 @@
           solLine.textContent = solution;
           elResults.appendChild(solLine);
           setStatus("Solved");
+          appendRobotControls(solution);
         } catch (e) {
           var errLine = document.createElement("div");
           errLine.className = "warnBlock";
@@ -742,6 +745,96 @@
         }
       }, 0);
     });
+  }
+
+  // ---------- Robot control (ESP32 -> Arduino) ----------
+  // Sends the solved move list to the ESP32 as a plain-text body (same
+  // pattern as the calibration endpoints - no JSON parsing needed on the
+  // device). The ESP32 relays moves to the Arduino over UART one at a time,
+  // waiting for an "OK" acknowledgement between moves; we poll
+  // /api/solution/status to show progress here without blocking on it.
+  var solutionPollTimer = null;
+
+  function appendRobotControls(solutionText) {
+    if (!HAS_HTTP_ORIGIN) return; // nothing to send to when opened as a file
+
+    var row = document.createElement("div");
+    row.className = "resultBlock";
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "12px";
+    row.style.flexWrap = "wrap";
+
+    var sendBtn = document.createElement("button");
+    sendBtn.className = "primary";
+    sendBtn.textContent = "Send to Cubus robot";
+
+    var progressText = document.createElement("span");
+    progressText.style.fontFamily = "inherit";
+
+    row.appendChild(sendBtn);
+    row.appendChild(progressText);
+    elResults.appendChild(row);
+
+    sendBtn.addEventListener("click", function () {
+      clearInterval(solutionPollTimer);
+      sendBtn.disabled = true;
+      progressText.textContent = "Sending to robot\u2026";
+
+      fetch("/api/solution", {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: solutionText
+      })
+        .then(function (r) {
+          return r.text().then(function (text) {
+            var data;
+            try { data = JSON.parse(text); } catch (e) { data = {}; }
+            return { httpOk: r.ok, data: data };
+          });
+        })
+        .then(function (res) {
+          if (!res.httpOk || !res.data.ok) {
+            progressText.textContent = "Robot rejected the solution" +
+              (res.data && res.data.error ? ": " + res.data.error : "");
+            sendBtn.disabled = false;
+            return;
+          }
+          watchSolutionProgress(progressText, sendBtn);
+        })
+        .catch(function (err) {
+          progressText.textContent = "Couldn't reach the robot: " + err.message;
+          sendBtn.disabled = false;
+        });
+    });
+  }
+
+  function watchSolutionProgress(progressText, sendBtn) {
+    clearInterval(solutionPollTimer);
+    solutionPollTimer = setInterval(function () {
+      fetch("/api/solution/status")
+        .then(function (r) { return r.json(); })
+        .then(function (s) {
+          if (s.state === "running") {
+            progressText.textContent = "Move " + (s.currentIndex + 1) + "/" + s.moveCount +
+              ": " + s.currentMove;
+          } else if (s.state === "done") {
+            progressText.textContent = "Done \u2014 the robot finished the solve.";
+            clearInterval(solutionPollTimer);
+            sendBtn.disabled = false;
+          } else if (s.state === "error") {
+            progressText.textContent = "Robot error at move " + (s.currentIndex + 1) +
+              "/" + s.moveCount + ": " + s.error;
+            clearInterval(solutionPollTimer);
+            sendBtn.disabled = false;
+          }
+          // state === "idle" between the POST landing and the ESP32 picking
+          // it up - just keep polling silently.
+        })
+        .catch(function () {
+          // Transient network hiccup - keep polling rather than giving up.
+        });
+    }, 400);
   }
 
   // ---------- Boot ----------

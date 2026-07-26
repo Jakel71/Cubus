@@ -23,14 +23,17 @@ clustering or the Kociemba solver itself. So the split is:
 ## Files
 
 ```
-esp32/cubus_esp32.ino   Arduino sketch (WiFi, web server, calibration API)
+esp32/cubus_esp32.ino   Arduino sketch (WiFi, web server, calibration API,
+                         solution relay to a second Arduino over UART)
 data/index.html         Page layout + styling
-data/app.js             Camera capture, capture/edit workflow, UI wiring
+data/app.js             Camera capture, capture/edit workflow, UI wiring,
+                         sends the solved move list to the ESP32 and shows
+                         live turn-by-turn progress
 data/algorithm.js       Ported 1:1 from cube_scanner.py: hue/HSV distance,
                          assign_with_quota, weighted_hsv_mean,
                          solve_face_colors, unmirror_face
 data/vision.js          RGB->HSV (OpenCV convention) + a small k-means
-                         implementation, replacing cv2.kmeans
+                         implementation, replacing cv2.kmeans()
 data/cubejs.js           Vendored two-phase solver (npm package "cubejs",
                          MIT licensed) implementing Kociemba's algorithm —
                          same algorithm the Python `kociemba` package uses
@@ -111,6 +114,49 @@ here since `localhost` is a secure origin.
    Edit / Continue prompt, same as the Python tool's "press E to edit".
 5. Repeat for all 6 faces (in U, R, F, D, L, B order), then tap
    **Solve cube**.
+6. Once solved, tap **Send to Cubus robot** to hand the move list to the
+   ESP32, which relays it to the Arduino driving the physical cube turns.
+   The page polls progress and shows "Move 7/24: R2" style updates as each
+   turn completes.
+
+## Sending the solve to a robot (ESP32 -> Arduino)
+
+The browser does the scanning and solving; the ESP32 is just a relay
+between the browser and a second microcontroller (the Arduino) that
+actually turns the cube. This only matters if you're building the
+physical solver — skip this section if you're just using Cubus to get the
+move list yourself.
+
+**Wiring**: a second UART, separate from the ESP32's USB/Serial Monitor
+connection. Connect ESP32 TX (`ARDUINO_TX_PIN`, default GPIO5) to the
+Arduino's RX, ESP32 RX (`ARDUINO_RX_PIN`, default GPIO4) to the Arduino's
+TX, and tie the grounds together. Pick different GPIOs in the sketch if
+those two are already in use on your board (avoid strapping pins like
+GPIO2/8/9 on most ESP32-C3 boards).
+
+**Protocol**: deliberately minimal, one line at a time, `9600` baud by
+default (`ARDUINO_BAUD` in the sketch):
+- ESP32 → Arduino: the move text plus a newline, e.g. `R2\n`, `F'\n`, `U\n`
+- Arduino → ESP32: `OK\n` once that move has physically finished, or
+  `ERR <reason>\n` if it can't do it (e.g. a jam)
+
+The ESP32 waits for that reply before sending the next move — moves can
+never outrun however long a physical turn actually takes on your rig. If
+no reply arrives within `ARDUINO_ACK_TIMEOUT_MS` (15s by default), the
+ESP32 gives up on the solve and reports a timeout back to the browser.
+Your Arduino sketch just needs to: read a line, execute that turn, then
+print `OK` (or `ERR ...`) when done.
+
+**HTTP endpoints** (used by `app.js`, but usable directly for testing,
+e.g. with `curl`):
+- `POST /api/solution` — body is the raw move string (`"R U2 F' D2 ..."`,
+  same format `cube.js`'s `solve()` returns). Starts relaying to the
+  Arduino; responds `{"ok":true,"moveCount":N}` or a 400/409 with an
+  error if the text is invalid or a solve is already running.
+- `GET /api/solution/status` — `{"state":"idle"|"running"|"done"|"error",
+  "currentIndex":N,"moveCount":N,"currentMove":"R2","error":"..."}`
+- `POST /api/solution/cancel` — resets the relay to idle (does not stop
+  a turn already in progress on the Arduino itself).
 
 ## Troubleshooting
 
