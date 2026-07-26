@@ -20,3 +20,10 @@ Normal:
 10. Place your cube into the machine
 11. hit "Send to Cubus robot" and watch the machine solve your cube
 
+
+
+![alt text](cube.jpg)
+
+![alt text](top.jpg)
+
+![alt text](bottom.jpg)
